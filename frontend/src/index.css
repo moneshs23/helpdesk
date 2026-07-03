@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: "Inter", system-ui, sans-serif;
+  }
+  body {
+    @apply bg-brutal-paper text-brutal-ink dark:bg-brutal-dark dark:text-brutal-paper;
+    background-image: radial-gradient(#0a0a0a12 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .dark body {
+    background-image: radial-gradient(#ffffff10 1px, transparent 1px);
+  }
+  h1, h2, h3, .font-display {
+    font-family: "Space Grotesk", system-ui, sans-serif;
+  }
+  * {
+    scrollbar-width: thin;
+  }
+}
+
+@layer components {
+  /* Core neobrutalism surfaces */
+  .brutal-card {
+    @apply border-[3px] border-brutal-ink rounded-brutal bg-white shadow-brutal
+           dark:border-brutal-paper dark:bg-brutal-darkcard dark:shadow-brutal-white;
+  }
+  .brutal-card-lg {
+    @apply border-[3px] border-brutal-ink rounded-brutal bg-white shadow-brutal-lg
+           dark:border-brutal-paper dark:bg-brutal-darkcard dark:shadow-brutal-white-lg;
+  }
+
+  .brutal-btn {
+    @apply inline-flex items-center justify-center gap-2 border-[3px] border-brutal-ink
+           rounded-brutal px-4 py-2 font-bold shadow-brutal transition-all duration-100
+           active:translate-x-[3px] active:translate-y-[3px] active:shadow-none
+           hover:-translate-x-[1px] hover:-translate-y-[1px] hover:shadow-brutal-lg
+           dark:border-brutal-paper dark:shadow-brutal-white dark:hover:shadow-brutal-white-lg
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:active:translate-x-0
+           disabled:active:translate-y-0 disabled:hover:translate-x-0 disabled:hover:translate-y-0;
+  }
+  .brutal-btn-yellow { @apply brutal-btn bg-brutal-yellow text-brutal-ink; }
+  .brutal-btn-blue { @apply brutal-btn bg-brutal-blue text-white; }
+  .brutal-btn-pink { @apply brutal-btn bg-brutal-pink text-brutal-ink; }
+  .brutal-btn-ghost { @apply brutal-btn bg-white text-brutal-ink dark:bg-brutal-darkcard dark:text-brutal-paper; }
+
+  .brutal-input {
+    @apply w-full border-[3px] border-brutal-ink rounded-brutal px-3 py-2 bg-white
+           font-medium outline-none focus:shadow-brutal transition-shadow
+           dark:border-brutal-paper dark:bg-brutal-darker dark:text-brutal-paper
+           placeholder:text-neutral-400;
+  }
+
+  .brutal-badge {
+    @apply inline-flex items-center gap-1 border-2 border-brutal-ink rounded-full
+           px-2.5 py-0.5 text-xs font-bold dark:border-brutal-paper;
+  }
+
+  .brutal-chip {
+    @apply inline-flex items-center gap-1 border-2 border-brutal-ink rounded-brutal
+           px-2 py-0.5 text-xs font-bold bg-brutal-yellow dark:border-brutal-paper;
+  }
+}

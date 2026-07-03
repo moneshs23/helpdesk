@@ -22,7 +22,8 @@ class ChatService:
 
     async def process(self, request: ChatRequest) -> ChatResponse:
         response = await run_chat(request)
-        await self._persist(request, response)
+        if request.persist:
+            await self._persist(request, response)
         return response
 
     async def _persist(self, request: ChatRequest, response: ChatResponse) -> None:

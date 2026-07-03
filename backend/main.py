@@ -20,6 +20,7 @@ from backend.api import (
     history,
     products,
     system,
+    tickets,
     translate,
     upload,
 )
@@ -98,7 +99,8 @@ def create_app() -> FastAPI:
 
     # Feature routers
     for module in (
-        upload, chat, documents, history, translate, products, analytics, system
+        upload, chat, documents, history, translate, products, analytics,
+        tickets, system,
     ):
         app.include_router(module.router)
 
@@ -107,12 +109,12 @@ def create_app() -> FastAPI:
 
 
 def _mount_frontend(app: FastAPI) -> None:
-    """Serve the built frontend (frontend/dist) in production, if present."""
+    """Serve the built SPA (frontend/dist) with client-side routing fallback."""
+    from fastapi.responses import FileResponse
+    from starlette.exceptions import HTTPException as StarletteHTTPException
+
     dist = Path(ROOT_DIR) / "frontend" / "dist"
-    if dist.exists():
-        app.mount("/", StaticFiles(directory=str(dist), html=True), name="frontend")
-        logger.info(f"Serving frontend from {dist}")
-    else:
+    if not dist.exists():
         @app.get("/", tags=["meta"])
         async def root() -> dict:
             return {
@@ -122,6 +124,37 @@ def _mount_frontend(app: FastAPI) -> None:
                 "docs": "/docs",
                 "note": "Frontend not built yet. Run `make frontend` for dev mode.",
             }
+        return
+
+    # Serve hashed assets and static files.
+    app.mount("/assets", StaticFiles(directory=str(dist / "assets")), name="assets")
+    index_file = dist / "index.html"
+
+    @app.get("/", include_in_schema=False)
+    async def spa_root() -> FileResponse:
+        return FileResponse(str(index_file))
+
+    # SPA fallback: any non-API GET returns index.html so React Router handles it.
+    @app.exception_handler(StarletteHTTPException)
+    async def spa_fallback(request: Request, exc: StarletteHTTPException):
+        if (
+            exc.status_code == 404
+            and request.method == "GET"
+            and not request.url.path.startswith("/api")
+            and not request.url.path.startswith("/docs")
+        ):
+            return FileResponse(str(index_file))
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    # Serve root-level static files (favicon, etc.).
+    @app.get("/{filename}", include_in_schema=False)
+    async def spa_static(filename: str):
+        candidate = dist / filename
+        if candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(index_file))
+
+    logger.info(f"Serving frontend (SPA) from {dist}")
 
 
 app = create_app()

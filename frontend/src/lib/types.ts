@@ -79,6 +79,7 @@ export interface ChatRequest {
   agent_name?: string;
   product?: string;
   conversation_id?: string;
+  persist?: boolean;
 }
 
 export interface ConversationRecord {
@@ -118,6 +119,34 @@ export interface ProductSearchResponse {
   grounded: boolean;
   answer: string;
   chunks: RetrievedChunk[];
+}
+
+export interface TicketRecord {
+  id: number;
+  conversation_id: string;
+  customer_id?: string | null;
+  agent_name?: string | null;
+  product?: string | null;
+  question: string;
+  detected_language: Language;
+  translated_query: string;
+  final_reply: string;
+  customer_reply: string;
+  confidence: number;
+  status: ConvStatus;
+  response_time_ms: number;
+  created_at: string;
+  answered_at?: string | null;
+}
+
+export interface CustomerStatus {
+  conversation_id: string;
+  question: string;
+  status: ConvStatus;
+  reply: string;
+  language: Language;
+  agent_name?: string | null;
+  answered_at?: string | null;
 }
 
 export interface ModelInfo {

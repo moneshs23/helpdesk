@@ -105,6 +105,7 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     top_k_docs: Optional[int] = None
     top_k_chats: Optional[int] = None
+    persist: bool = True  # set False when only assisting an existing ticket
 
 
 class ChatResponse(BaseModel):
@@ -155,6 +156,55 @@ class UpdateConversationRequest(BaseModel):
     pinned: Optional[bool] = None
     status: Optional[ConversationStatus] = None
     tags: Optional[list[str]] = None
+
+
+# ============================================================
+#  Tickets (two-sided: customer <-> agent)
+# ============================================================
+class CustomerAskRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    customer_id: Optional[str] = None
+    product: Optional[str] = None
+
+
+class TicketRecord(BaseModel):
+    id: int
+    conversation_id: str
+    customer_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    product: Optional[str] = None
+    question: str
+    detected_language: Language
+    translated_query: str
+    final_reply: str
+    customer_reply: str = ""
+    confidence: float = 0.0
+    status: ConversationStatus = ConversationStatus.PENDING
+    response_time_ms: int = 0
+    created_at: datetime
+    answered_at: Optional[datetime] = None
+
+
+class TicketListResponse(BaseModel):
+    tickets: list[TicketRecord]
+    total: int
+
+
+class TicketReplyRequest(BaseModel):
+    reply: str = Field(min_length=1)
+    agent_name: Optional[str] = None
+    confidence: Optional[float] = None
+    resolved: bool = False
+
+
+class CustomerStatusResponse(BaseModel):
+    conversation_id: str
+    question: str
+    status: ConversationStatus
+    reply: str = ""            # in the customer's language
+    language: Language = Language.EN
+    agent_name: Optional[str] = None
+    answered_at: Optional[datetime] = None
 
 
 # ============================================================

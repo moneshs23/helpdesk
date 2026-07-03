@@ -1,22 +1,22 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
-  MessagesSquare,
   Upload,
   History,
-  Package,
   BarChart3,
   Settings,
   Headphones,
+  MessageCircle,
+  Inbox,
 } from "lucide-react";
 import clsx from "clsx";
 
 const links = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/chat", label: "Chat", icon: MessagesSquare },
+  { to: "/customer", label: "Customer View", icon: MessageCircle },
+  { to: "/agent", label: "Agent Console", icon: Inbox },
   { to: "/upload", label: "Upload Documents", icon: Upload },
   { to: "/history", label: "Conversation History", icon: History },
-  { to: "/products", label: "Products", icon: Package },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/settings", label: "Settings", icon: Settings },
 ];

@@ -29,10 +29,31 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist, then run lightweight migrations."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate)
     logger.info("SQLite database initialized.")
+
+
+def _migrate(conn) -> None:
+    """Add columns introduced after the first release (SQLite-safe)."""
+    from sqlalchemy import text
+
+    existing = {
+        row[1] for row in conn.execute(text("PRAGMA table_info(conversations)"))
+    }
+    additions = {
+        "customer_reply": "TEXT DEFAULT ''",
+        "source": "VARCHAR(16) DEFAULT 'agent'",
+        "answered_at": "DATETIME",
+    }
+    for column, ddl in additions.items():
+        if column not in existing:
+            conn.execute(
+                text(f"ALTER TABLE conversations ADD COLUMN {column} {ddl}")
+            )
+            logger.info(f"Migrated: added conversations.{column}")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

@@ -4,11 +4,13 @@ import type {
   ChatRequest,
   ChatResponse,
   ConversationRecord,
+  CustomerStatus,
   DocumentMetadata,
   ModelInfo,
   ProductSearchResponse,
   PublicSettings,
   SimilarConversation,
+  TicketRecord,
 } from "./types";
 
 const client = axios.create({
@@ -85,4 +87,20 @@ export const api = {
 
   // ---- analytics ----
   analytics: () => client.get<AnalyticsResponse>("/analytics").then((r) => r.data),
+
+  // ---- tickets (two-sided flow) ----
+  customerAsk: (message: string, customer_id?: string, product?: string) =>
+    client
+      .post<TicketRecord>("/customer/ask", { message, customer_id, product })
+      .then((r) => r.data),
+  customerStatus: (conversationId: string) =>
+    client.get<CustomerStatus>(`/customer/status/${conversationId}`).then((r) => r.data),
+  listTickets: (status = "pending") =>
+    client
+      .get<{ tickets: TicketRecord[]; total: number }>("/tickets", { params: { status } })
+      .then((r) => r.data),
+  ticketReply: (id: number, reply: string, agent_name?: string, confidence?: number, resolved = false) =>
+    client
+      .post<TicketRecord>(`/tickets/${id}/reply`, { reply, agent_name, confidence, resolved })
+      .then((r) => r.data),
 };

@@ -25,8 +25,8 @@ fi
 
 # ---- Ensure models are present ----
 echo "==> Checking Ollama models..."
-ollama list | grep -q "gemma3" || ollama pull gemma3:4b
-ollama list | grep -q "nomic-embed-text" || ollama pull nomic-embed-text
+ollama list 2>/dev/null | grep -q "gemma3" || { echo "Trying to pull gemma3..."; ollama pull gemma3:4b || echo "Warning: Could not pull gemma3 (offline?)."; }
+ollama list 2>/dev/null | grep -q "nomic-embed-text" || { echo "Trying to pull nomic-embed-text..."; ollama pull nomic-embed-text || echo "Warning: Could not pull nomic-embed-text (offline?)."; }
 
 # ---- Build frontend ----
 if [ ! -d "frontend/node_modules" ]; then

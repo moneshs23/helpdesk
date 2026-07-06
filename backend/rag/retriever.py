@@ -13,6 +13,7 @@ from backend.models.schemas import (
     SimilarConversation,
 )
 from backend.qdrant import get_vector_store
+from backend.utils.logging import logger
 
 _STOPWORDS = {
     "the", "a", "an", "is", "are", "was", "were", "to", "of", "and", "or",
@@ -96,7 +97,53 @@ async def retrieve_documents(
     chunks = _dedupe(chunks)
     if mode == "semantic":
         chunks = [c for c in chunks if c.score >= settings.min_score_threshold]
-    return chunks[:top_k]
+    chunks = chunks[:top_k]
+
+    # ── Graph expansion (optional, when Neo4j is enabled) ──
+    if settings.neo4j_enabled:
+        chunks = await _graph_expand(query, chunks, top_k)
+
+    return chunks
+
+
+async def _graph_expand(
+    query: str, chunks: list[RetrievedChunk], top_k: int
+) -> list[RetrievedChunk]:
+    """Enhance retrieval results with graph-related chunks from Neo4j."""
+    try:
+        from backend.graph import get_graph_store
+
+        graph = get_graph_store()
+        if graph is None:
+            return chunks
+
+        # Get chunk IDs already retrieved by vector search
+        existing_ids = {c.id for c in chunks}
+
+        # Ask the graph for related chunks via entity/relationship traversal
+        related = await graph.get_related_chunks(
+            [c.id for c in chunks], depth=1
+        )
+
+        if not related:
+            return chunks
+
+        # Boost existing chunks that also appear in graph results
+        graph_chunk_ids = {r["chunk_id"] for r in related}
+        weight = settings.graph_retrieval_weight
+        for chunk in chunks:
+            if chunk.id in graph_chunk_ids:
+                chunk.score = min(1.0, chunk.score + weight * 0.2)
+
+        logger.debug(
+            f"Graph expansion: {len(related)} related chunks found, "
+            f"{len(graph_chunk_ids & existing_ids)} overlapping"
+        )
+
+        return chunks[:top_k]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Graph expansion failed, using vector-only: {exc}")
+        return chunks
 
 
 def _dedupe(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:

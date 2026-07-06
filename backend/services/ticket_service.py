@@ -25,6 +25,28 @@ from backend.utils.logging import logger
 from backend.utils.security import neutralize_injection
 
 
+# Regex patterns to strip internal source references from customer-facing replies.
+import re
+
+_SOURCE_PATTERNS = [
+    re.compile(r"\[Source\s*:?\s*\d+\]", re.IGNORECASE),       # [Source 1], [Source: 2]
+    re.compile(r"\(Source\s*:?\s*\d+\)", re.IGNORECASE),        # (Source 1), (Source: 2)
+    re.compile(r"\[Source\s*:?\s*[^\]]+\]", re.IGNORECASE),     # [Source: filename.pdf]
+    re.compile(r"\(ref\.?\s*\d+\)", re.IGNORECASE),             # (ref 1), (ref. 2)
+    re.compile(r"\[ref\.?\s*\d+\]", re.IGNORECASE),             # [ref 1], [ref. 2]
+]
+
+
+def _strip_sources(text: str) -> str:
+    """Remove internal source citations from text before showing it to customers."""
+    result = text
+    for pattern in _SOURCE_PATTERNS:
+        result = pattern.sub("", result)
+    # Collapse multiple spaces left behind by removals.
+    result = re.sub(r"  +", " ", result).strip()
+    return result
+
+
 def _lang(value: str) -> Language:
     return Language(value) if value in Language._value2member_map_ else Language.EN
 
@@ -158,9 +180,9 @@ class TicketService:
         cust_lang = _lang(c.detected_language)
         if cust_lang == Language.JA:
             translated, _ = await self.translator.translate(reply, Language.EN, Language.JA)
-            c.customer_reply = translated
+            c.customer_reply = _strip_sources(translated)
         else:
-            c.customer_reply = reply
+            c.customer_reply = _strip_sources(reply)
 
         await self.session.flush()
 

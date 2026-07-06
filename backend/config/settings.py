@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     min_score_threshold: float = 0.6
     hybrid_alpha: float = 0.5
 
+    # ---- Neo4j (optional graph retrieval) ----
+    neo4j_enabled: bool = False
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = ""
+    graph_retrieval_weight: float = 0.3  # weight for graph results when merging
+
     # ---- Uploads ----
     upload_dir: str = "./uploads"
     max_upload_mb: int = 25

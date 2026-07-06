@@ -9,6 +9,8 @@ import {
   History as HistoryIcon,
   Brain,
   Trophy,
+  Calendar,
+  User,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { ChatResponse, ConversationRecord, Suggestion } from "../lib/types";
@@ -205,8 +207,13 @@ export default function Chat() {
                 <div key={i} className="rounded-brutal border-2 border-brutal-ink p-2 text-xs dark:border-brutal-paper">
                   <p className="font-bold line-clamp-2">{c.question}</p>
                   <p className="mt-1 line-clamp-2 opacity-80">{c.answer}</p>
-                  <div className="mt-1 flex items-center justify-between opacity-70">
-                    <span>{c.agent_name}</span>
+                  <div className="mt-1 flex items-center gap-2 opacity-70 flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <User size={10} /> {c.agent_name}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Calendar size={10} /> {new Date(c.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </span>
                     <Badge color="green">{Math.round(c.similarity * 100)}%</Badge>
                   </div>
                 </div>

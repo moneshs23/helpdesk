@@ -74,7 +74,6 @@ class ConversationORM(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     tags: Mapped[str] = mapped_column(Text, default="")
     response_time_ms: Mapped[int] = mapped_column(Integer, default=0)
-    # Reply shown to the customer, in the customer's own language.
     customer_reply: Mapped[str] = mapped_column(Text, default="")
     source: Mapped[str] = mapped_column(String(16), default="agent")  # agent | customer
     answered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

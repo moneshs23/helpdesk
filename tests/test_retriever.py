@@ -121,3 +121,15 @@ def test_extract_closed_returns_verbatim_answer_segment():
         "The applicable part number is MK324092 - SEAT BELT,FR SEAT."
     )
     assert _extract_closed("no ticket markers here") == ""
+
+
+def test_opened_excerpt_drops_closed_answer():
+    from backend.rag.pipeline import _opened_excerpt
+
+    text = (
+        "VIN: MEC0463PCJP027764; Opened: starter assy part number?; "
+        "Closed: Greetings, MX916125 is an improved part."
+    )
+    excerpt = _opened_excerpt(text)
+    assert "starter assy" in excerpt
+    assert "MX916125" not in excerpt  # answers must not bloat the prompt

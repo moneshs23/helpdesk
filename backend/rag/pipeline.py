@@ -173,11 +173,10 @@ async def run_chat(request: ChatRequest) -> ChatResponse:
 # "none match" escape (source 0) made the small model take it even for
 # obvious matches, collapsing good retrievals into no-answer responses.
 _SELECT_SYSTEM = (
-    "You match a customer question to support tickets. Each numbered source has "
-    "'Opened:' (that ticket's question) and 'Closed:' (its answer). Sources may "
-    "share a VIN — same vehicle, different tickets about different parts. "
-    "Choose the single source whose Opened: question is about the same subject "
-    'as the customer\'s question. Reply with VALID JSON only: {"source": N}.'
+    "You match a customer question to numbered support-ticket questions. "
+    "Tickets may share a VIN — same vehicle, different subjects. Choose the "
+    "single ticket about the same subject as the customer's question. "
+    'Reply with VALID JSON only: {"source": N}.'
 )
 
 
@@ -187,6 +186,18 @@ def _extract_closed(text: str) -> str:
     if idx == -1:
         return ""
     return text[idx + len("Closed:") :].strip()
+
+
+def _opened_excerpt(text: str, limit: int = 240) -> str:
+    """VIN + Opened: question of a ticket chunk, without its Closed: answer.
+
+    The selection step only needs to compare questions — feeding the answers
+    too roughly doubles the prompt, and prompt evaluation is the dominant
+    cost of the whole request on CPU-only inference.
+    """
+    end = text.rfind("Closed:")
+    head = text[: end if end != -1 else len(text)].strip(" ;\n")
+    return head[:limit]
 
 
 async def _extractive_suggestions(
@@ -204,22 +215,29 @@ async def _extractive_suggestions(
     resolves to Japanese.
     """
     translator = get_translator()
-    context, source_map = build_context(chunks, [])
-    # Include the customer's original-language wording: a Japanese question
-    # often IS (near-)verbatim some ticket's Opened: text, making selection an
-    # exact string match instead of a cross-language paraphrase judgement.
-    question = f"CUSTOMER QUESTION: {query}"
-    if original_query:
-        question += f"\nCUSTOMER QUESTION (original wording): {original_query}"
-    prompt = f"SOURCES:\n{context}\n\n{question}\n\nJSON:"
-    data = await get_llm().generate_json(
-        prompt, system=_SELECT_SYSTEM, temperature=0.0, num_predict=16
-    )
-    try:
-        n = int(data.get("source", 1))
-    except (TypeError, ValueError):
-        n = 1
-    chosen = source_map.get(n) or chunks[0]
+    if len(chunks) == 1:
+        # Nothing to disambiguate — skip the selection LLM call entirely.
+        chosen = chunks[0]
+    else:
+        sources = "\n".join(
+            f"[{i}] {_opened_excerpt(c.text)}" for i, c in enumerate(chunks, 1)
+        )
+        # Include the customer's original-language wording: a Japanese
+        # question often IS (near-)verbatim some ticket's Opened: text,
+        # making selection an exact string match instead of a cross-language
+        # paraphrase judgement.
+        question = f"CUSTOMER QUESTION: {query}"
+        if original_query:
+            question += f"\nCUSTOMER QUESTION (original wording): {original_query}"
+        prompt = f"TICKET QUESTIONS:\n{sources}\n\n{question}\n\nJSON:"
+        data = await get_llm().generate_json(
+            prompt, system=_SELECT_SYSTEM, temperature=0.0, num_predict=16
+        )
+        try:
+            n = int(data.get("source", 1))
+        except (TypeError, ValueError):
+            n = 1
+        chosen = chunks[n - 1] if 1 <= n <= len(chunks) else chunks[0]
 
     ordered = [chosen] + [c for c in chunks if c.id != chosen.id]
     suggestions: list[Suggestion] = []
@@ -228,14 +246,18 @@ async def _extractive_suggestions(
         if not closed:
             continue
         answer_ja = None
+        answer_en = closed
         if detect_language(closed) == Language.JA:
-            answer_en, _ = await translator.translate(
-                closed, Language.JA, Language.EN
-            )
             if reply_lang == Language.JA:
                 answer_ja = closed  # verbatim original — never re-translated
-        else:
-            answer_en = closed
+            if i == 1:
+                # Only the chosen answer is translated for the console —
+                # translating alternates the agent rarely opens would add an
+                # LLM round-trip (~15s) apiece. Alternates keep the original
+                # text; the /translate endpoint covers them on demand.
+                answer_en, _ = await translator.translate(
+                    closed, Language.JA, Language.EN
+                )
         suggestions.append(
             Suggestion(
                 rank=len(suggestions) + 1,

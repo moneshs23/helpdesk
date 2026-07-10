@@ -23,7 +23,7 @@ class ProductService:
         self, query: str, *, product: str | None = None, top_k: int = 6
     ) -> ProductSearchResponse:
         chunks: list[RetrievedChunk] = await retrieve_documents(
-            query, top_k=top_k, product=product, mode="hybrid"
+            query, top_k=top_k, product=product
         )
         if not chunks:
             return ProductSearchResponse(

@@ -88,7 +88,7 @@ export default function Products() {
           </h2>
           <div className="grid gap-2 md:grid-cols-2">
             {resp.chunks.map((c) => (
-              <div key={c.id} className="rounded-brutal border-2 border-brutal-ink p-2 text-xs dark:border-brutal-paper">
+              <div key={c.id} className="rounded-brutal border border-brutal-border p-2 text-xs dark:border-brutal-borderDark">
                 <div className="mb-1 flex items-center justify-between">
                   <span className="font-bold truncate">{c.metadata.filename}</span>
                   <Badge color="blue">p{c.metadata.page}</Badge>

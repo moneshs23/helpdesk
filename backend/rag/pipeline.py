@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import asyncio
 from datetime import datetime, timezone
 
 from backend.config import settings
@@ -20,6 +21,7 @@ from backend.rag.prompt import (
     build_generation_prompt,
 )
 from backend.rag.retriever import retrieve_conversations, retrieve_documents
+from backend.embeddings import get_embedder
 from backend.translation import detect_language, get_translator
 from backend.utils.logging import logger
 from backend.utils.security import neutralize_injection
@@ -77,36 +79,73 @@ async def run_chat(request: ChatRequest) -> ChatResponse:
         else translated_query
     )
 
-    # 4) Retrieve documents + previous conversations
-    chunks = await retrieve_documents(
-        rewritten,
-        top_k=request.top_k_docs or settings.top_k_docs,
-        product=request.product,
-        mode="hybrid",
-    )
-    similar = await retrieve_conversations(
-        rewritten,
-        top_k=request.top_k_chats or settings.top_k_chats,
-        product=request.product,
+    # 4) Retrieve documents + previous conversations. Reuse one embedding and
+    # run both vector searches together to avoid duplicate Ollama calls.
+    vector = await get_embedder().embed_query(rewritten)
+    chunks, similar = await asyncio.gather(
+        retrieve_documents(
+            rewritten,
+            top_k=request.top_k_docs or settings.top_k_docs,
+            product=request.product,
+            mode="hybrid",
+            vector=vector,
+            # Translation loses exact original wording — pass the
+            # pre-translation text too so native-script (e.g. Japanese)
+            # keyword matching can still hit ticket content in that script.
+            extra_keyword_text=safe_message if detected != Language.EN else None,
+        ),
+        retrieve_conversations(
+            rewritten,
+            top_k=request.top_k_chats or settings.top_k_chats,
+            product=request.product,
+            vector=vector,
+        ),
     )
 
     # 5) Relevance gate (enforce the no-hallucination policy up front).
-    has_relevant = any(c.score >= settings.min_score_threshold for c in chunks)
-    if not has_relevant:
-        logger.info("No chunk cleared the relevance threshold; returning no-info.")
+    # retrieve_documents() already filters for relevance internally (semantic
+    # score >= threshold, OR a confirmed keyword match reported as score=0.0
+    # by design) — so an empty result here is the actual "nothing relevant"
+    # signal. Re-checking score against the threshold here would wrongly
+    # reject legitimate keyword-only matches (e.g. an exact part number/VIN
+    # with no strong semantic overlap).
+    reply_lang = _resolve_reply_language(request.reply_language, detected)
+    ticket_chunks = [c for c in chunks if "Closed:" in c.text and "Opened:" in c.text]
+    if not chunks:
+        logger.info("No chunk cleared retrieval relevance; returning no-info.")
         suggestions, grounded = _no_info_suggestions(), False
+    elif ticket_chunks:
+        # Ticket data: the answer already exists verbatim in the Closed: text.
+        # The LLM only SELECTS the matching ticket — the answer itself is
+        # copied from the document, never composed, so it can't drift from
+        # what the original agent actually replied.
+        suggestions, grounded = await _extractive_suggestions(
+            translated_query,
+            ticket_chunks,
+            reply_lang,
+            original_query=safe_message if detected != Language.EN else None,
+        )
     else:
-        context, source_map = build_context(chunks, similar)
+        # Conversation memory (`similar`) is still returned to the agent below
+        # for reference, but is left out of the generation prompt itself — on
+        # CPU-only inference, every extra token of context costs real time,
+        # and the single retrieved chunk is normally the complete answer.
+        context, source_map = build_context(chunks, [])
         suggestions, grounded = await _generate_suggestions(
             translated_query, context, source_map
         )
 
-    # 6) Translate answers back if the reply language is Japanese
-    reply_lang = _resolve_reply_language(request.reply_language, detected)
-    if reply_lang == Language.JA:
-        for s in suggestions:
-            s.answer_ja, _ = await translator.translate(
-                s.answer_en, Language.EN, Language.JA
+    # 6) Translate the top answer back if the reply language is Japanese.
+    # Extractive suggestions may already carry a verbatim-Japanese answer_ja —
+    # keep it untouched. Only rank 1 is auto-translated: the customer receives
+    # one reply, and translating the alternates would double or triple the
+    # LLM round-trips for text the agent usually never sends (the /translate
+    # endpoint covers the rare case where an alternate is chosen).
+    if reply_lang == Language.JA and suggestions:
+        top = suggestions[0]
+        if not top.answer_ja:
+            top.answer_ja, _ = await translator.translate(
+                top.answer_en, Language.EN, Language.JA
             )
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -127,6 +166,92 @@ async def run_chat(request: ChatRequest) -> ChatResponse:
     )
 
 
+# Tiny selection task: the model outputs ~10 tokens (a source number), so the
+# whole cost is prompt evaluation — and the verbatim Closed: text can never be
+# misquoted the way composed answers were.
+# Forced choice on purpose: retrieval already gated relevance, and offering a
+# "none match" escape (source 0) made the small model take it even for
+# obvious matches, collapsing good retrievals into no-answer responses.
+_SELECT_SYSTEM = (
+    "You match a customer question to support tickets. Each numbered source has "
+    "'Opened:' (that ticket's question) and 'Closed:' (its answer). Sources may "
+    "share a VIN — same vehicle, different tickets about different parts. "
+    "Choose the single source whose Opened: question is about the same subject "
+    'as the customer\'s question. Reply with VALID JSON only: {"source": N}.'
+)
+
+
+def _extract_closed(text: str) -> str:
+    """Return the verbatim Closed: segment of a ticket chunk."""
+    idx = text.rfind("Closed:")
+    if idx == -1:
+        return ""
+    return text[idx + len("Closed:") :].strip()
+
+
+async def _extractive_suggestions(
+    query: str,
+    chunks: list,
+    reply_lang: Language,
+    original_query: str | None = None,
+) -> tuple[list[Suggestion], bool]:
+    """Answer by copying the matched ticket's Closed: text verbatim.
+
+    The chosen source's Closed: text IS the answer. If it's Japanese, the
+    customer-facing answer_ja is that original text untouched (no round-trip
+    translation to corrupt part numbers) and answer_en is a translation for
+    the agent console; answer_ja is only populated when the reply language
+    resolves to Japanese.
+    """
+    translator = get_translator()
+    context, source_map = build_context(chunks, [])
+    # Include the customer's original-language wording: a Japanese question
+    # often IS (near-)verbatim some ticket's Opened: text, making selection an
+    # exact string match instead of a cross-language paraphrase judgement.
+    question = f"CUSTOMER QUESTION: {query}"
+    if original_query:
+        question += f"\nCUSTOMER QUESTION (original wording): {original_query}"
+    prompt = f"SOURCES:\n{context}\n\n{question}\n\nJSON:"
+    data = await get_llm().generate_json(
+        prompt, system=_SELECT_SYSTEM, temperature=0.0, num_predict=16
+    )
+    try:
+        n = int(data.get("source", 1))
+    except (TypeError, ValueError):
+        n = 1
+    chosen = source_map.get(n) or chunks[0]
+
+    ordered = [chosen] + [c for c in chunks if c.id != chosen.id]
+    suggestions: list[Suggestion] = []
+    for i, c in enumerate(ordered[:3], start=1):
+        closed = _extract_closed(c.text)
+        if not closed:
+            continue
+        answer_ja = None
+        if detect_language(closed) == Language.JA:
+            answer_en, _ = await translator.translate(
+                closed, Language.JA, Language.EN
+            )
+            if reply_lang == Language.JA:
+                answer_ja = closed  # verbatim original — never re-translated
+        else:
+            answer_en = closed
+        suggestions.append(
+            Suggestion(
+                rank=len(suggestions) + 1,
+                answer_en=answer_en,
+                answer_ja=answer_ja,
+                confidence=0.95 if i == 1 else 0.5,
+                reasoning="",
+                referenced_documents=[c.metadata.filename],
+                referenced_pages=[c.metadata.page],
+            )
+        )
+    if not suggestions:
+        return _no_info_suggestions(), False
+    return suggestions, True
+
+
 async def _generate_suggestions(
     query: str, context: str, source_map: dict
 ) -> tuple[list[Suggestion], bool]:
@@ -135,14 +260,25 @@ async def _generate_suggestions(
 
     prompt = build_generation_prompt(query, context)
     llm = get_llm()
-    data = await llm.generate_json(prompt, system=SYSTEM_PROMPT, num_predict=1200)
+    # temperature=0.0 so the same query always yields the same answer —
+    # sampling at the default temperature made grounded answers flip between
+    # correct and wrong across identical runs.
+    data = await llm.generate_json(
+        prompt,
+        system=SYSTEM_PROMPT,
+        temperature=0.0,
+        num_predict=settings.llm_suggestion_num_predict,
+    )
 
     raw_suggestions = data.get("suggestions") or []
     if not raw_suggestions:
         # One retry: models occasionally emit malformed JSON on large contexts.
         logger.info("Empty suggestions; retrying generation once.")
         data = await llm.generate_json(
-            prompt, system=SYSTEM_PROMPT, temperature=0.0, num_predict=1200
+            prompt,
+            system=SYSTEM_PROMPT,
+            temperature=0.0,
+            num_predict=settings.llm_suggestion_num_predict,
         )
         raw_suggestions = data.get("suggestions") or []
 

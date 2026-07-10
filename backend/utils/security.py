@@ -10,7 +10,11 @@ from slugify import slugify
 from backend.config import settings
 from backend.models.enums import DocumentType
 
-ALLOWED_EXTENSIONS = {"pdf", "docx", "doc", "txt", "csv", "xlsx", "xls", "md", "markdown"}
+ALLOWED_EXTENSIONS = {
+    "pdf", "docx", "doc", "txt", "text", "csv", "tsv", "xlsx", "xls", "xlsm",
+    "md", "markdown", "pptx", "html", "htm", "json", "xml", "rtf", "log",
+    "yaml", "yml", "ini", "rst",
+}
 
 # Patterns commonly used in prompt-injection / jailbreak attempts.
 _INJECTION_PATTERNS = [

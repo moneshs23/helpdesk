@@ -85,7 +85,7 @@ export default function SettingsPage() {
         <h2 className="mb-3 font-display text-lg font-bold">Health Checks</h2>
         <div className="space-y-2">
           {health?.components?.map((c: any) => (
-            <div key={c.name} className="flex items-center justify-between rounded-brutal border-2 border-brutal-ink px-3 py-2 dark:border-brutal-paper">
+            <div key={c.name} className="flex items-center justify-between rounded-brutal border border-brutal-border px-3 py-2 dark:border-brutal-borderDark">
               <span className="font-bold">{c.name}</span>
               <span className="flex items-center gap-1 text-sm">
                 {c.ok ? <CheckCircle2 size={16} className="text-green-600" /> : <XCircle size={16} className="text-red-600" />}
@@ -126,7 +126,7 @@ export default function SettingsPage() {
 
 function Info({ label, value }: { label: string; value?: string }) {
   return (
-    <div className="rounded-brutal border-2 border-brutal-ink px-3 py-2 dark:border-brutal-paper">
+    <div className="rounded-brutal border border-brutal-border px-3 py-2 dark:border-brutal-borderDark">
       <p className="text-xs font-bold opacity-60">{label}</p>
       <p className="font-medium">{value ?? "—"}</p>
     </div>

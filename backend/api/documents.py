@@ -36,6 +36,23 @@ async def list_documents(
     return DocumentListResponse(documents=docs, total=len(docs))
 
 
+@router.post("/reindex")
+async def reindex_documents(service: DocumentServiceDep) -> dict:
+    """Re-chunk and re-embed all stored documents (replaces their old vectors)."""
+    try:
+        result = await service.reindex_all()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Reindex failed")
+        raise HTTPException(status_code=500, detail=f"Reindex failed: {exc}") from exc
+    return {
+        "message": (
+            f"Reindexed {result['reindexed']} of {result['total']} documents"
+            + (f" ({result['failed']} failed)" if result["failed"] else "")
+        ),
+        **result,
+    }
+
+
 @router.get("/{document_id}", response_model=DocumentMetadata)
 async def get_document(document_id: str, service: DocumentServiceDep) -> DocumentMetadata:
     doc = await service.get(document_id)

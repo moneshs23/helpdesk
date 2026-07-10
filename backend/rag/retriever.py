@@ -19,12 +19,73 @@ _STOPWORDS = {
     "the", "a", "an", "is", "are", "was", "were", "to", "of", "and", "or",
     "in", "on", "for", "with", "how", "what", "when", "where", "why", "do",
     "does", "can", "i", "my", "you", "your", "it", "this", "that", "please",
+    "me", "us", "we", "provide", "give", "tell", "kindly", "would", "could",
 }
 
 
+_CJK_RUN_RE = re.compile(r"[぀-ヿ㐀-䶿一-鿿｡-ﾟ]+")
+
+
+def _cjk_bigrams(text: str, limit: int = 16) -> list[str]:
+    """Cheap CJK 'tokenization' as character bigrams over each script run.
+
+    Japanese has no whitespace word boundaries, and this codebase has no
+    morphological analyzer — bigram overlap is a standard lightweight
+    fallback for exact-ish substring matching against Japanese ticket text
+    (e.g. half-width katakana "ｼｰﾄﾍﾞﾙﾄ") that a translated-to-English query
+    alone could never match.
+    """
+    bigrams: list[str] = []
+    for run in _CJK_RUN_RE.findall(text):
+        bigrams.extend(run[i : i + 2] for i in range(len(run) - 1))
+    return bigrams[:limit]
+
+
+def _identifier_like(token: str) -> bool:
+    """Part numbers / VINs: alphanumeric tokens containing a digit. Threshold
+    of 6 covers short fleet codes used as VINs (e.g. '505038') as well as
+    full 17-char VINs and part numbers like '75725b'."""
+    return len(token) >= 6 and any(ch.isdigit() for ch in token)
+
+
+def _prioritize_identifier_chunks(
+    chunks: list[RetrievedChunk],
+    identifiers: list[str],
+    top_k: int,
+    max_same_id: int = 7,
+) -> list[RetrievedChunk]:
+    """When the query quotes an identifier (VIN/part number), keep EVERY
+    ranked chunk containing it — one vehicle can have several tickets sharing
+    a VIN, and slicing to top_k before the LLM sees them would arbitrarily
+    drop the ticket whose question actually matches. Non-matching chunks fill
+    any remaining top_k budget after the identifier group."""
+    if not identifiers:
+        return chunks[:top_k]
+    matching = [
+        c for c in chunks
+        if any(i in c.text.lower() for i in identifiers)
+    ][:max_same_id]
+    if not matching:
+        return chunks[:top_k]
+    matched_ids = {c.id for c in matching}
+    rest = [c for c in chunks if c.id not in matched_ids]
+    return matching + rest[: max(0, top_k - len(matching))]
+
+
 def _keywords(text: str) -> list[str]:
-    tokens = re.findall(r"[A-Za-z0-9]{2,}", text.lower())
-    return [t for t in tokens if t not in _STOPWORDS][:12]
+    """Extract exact-match tokens (part numbers, VINs, codes) a query cares
+    about — these often matter more than semantic similarity, since embedding
+    models don't reliably distinguish one alphanumeric code from another."""
+    all_tokens = [
+        t for t in re.findall(r"[A-Za-z0-9]{2,}", text.lower())
+        if t not in _STOPWORDS
+    ]
+    tokens = all_tokens[:12]
+    # Identifiers (VIN, part number) must survive the cap even when they
+    # appear at the end of a long query — users often append the VIN last.
+    tokens += [t for t in all_tokens[12:] if _identifier_like(t)]
+    tokens += _cjk_bigrams(text)
+    return tokens
 
 
 def _to_chunk(hit: dict) -> RetrievedChunk:
@@ -63,6 +124,45 @@ def _normalize(scores: list[float]) -> list[float]:
     return [(s - lo) / (hi - lo) for s in scores]
 
 
+def _merge_hybrid(semantic: list[dict], keyword: list[dict]) -> list[dict]:
+    """Rank by a weighted blend, but keep the true semantic cosine as the
+    displayed/gating score so callers can reason about absolute relevance."""
+    alpha = settings.hybrid_alpha
+    sem_norm = _normalize([h["score"] for h in semantic])
+    kw_norm = _normalize([h["score"] for h in keyword])
+
+    combined: dict[str, dict] = {}
+    for h, ns in zip(semantic, sem_norm):
+        combined[h["id"]] = {
+            "id": h["id"],
+            "payload": h["payload"],
+            "score": h["score"],  # true cosine
+            "_rank": alpha * ns,
+            "_kw_hit": False,
+        }
+    for h, nk in zip(keyword, kw_norm):
+        if h["id"] in combined:
+            combined[h["id"]]["_rank"] += (1 - alpha) * nk
+            combined[h["id"]]["_kw_hit"] = True
+        else:
+            combined[h["id"]] = {
+                "id": h["id"],
+                "payload": h["payload"],
+                "score": 0.0,  # keyword-only hit, no semantic cosine
+                "_rank": (1 - alpha) * nk,
+                "_kw_hit": True,
+            }
+
+    # Exact keyword matches (e.g. a part number or VIN) are a stronger, more
+    # deterministic relevance signal than cosine similarity for this domain,
+    # and a tiny candidate pool makes normalized-score ties common — so a
+    # confirmed keyword hit always outranks a same-score keyword-less one
+    # instead of losing on dict/insertion-order tie-breaking.
+    return sorted(
+        combined.values(), key=lambda x: (x["_kw_hit"], x["_rank"]), reverse=True
+    )
+
+
 async def retrieve_documents(
     query: str,
     *,
@@ -70,21 +170,38 @@ async def retrieve_documents(
     product: str | None = None,
     doc_type: str | None = None,
     mode: str = "hybrid",
+    vector: list[float] | None = None,
+    extra_keyword_text: str | None = None,
 ) -> list[RetrievedChunk]:
     top_k = top_k or settings.top_k_docs
     store = get_vector_store()
     embedder = get_embedder()
+    # A wider merge pool than top_k (esp. when top_k=1) so min-max
+    # normalization has enough spread to be meaningful instead of collapsing
+    # a single candidate to a false 1.0 and creating spurious rank ties.
+    fan_out = max(top_k * 2, 8)
 
     semantic: list[dict] = []
     if mode in ("hybrid", "semantic"):
-        vector = await embedder.embed_query(query)
+        vector = vector or await embedder.embed_query(query)
         semantic = await store.search_documents(
-            vector, top_k=top_k * 2, product=product, doc_type=doc_type
+            vector, top_k=fan_out, product=product, doc_type=doc_type
         )
 
     keyword: list[dict] = []
     if mode in ("hybrid", "keyword"):
-        keyword = await store.keyword_search(_keywords(query), limit=top_k * 2)
+        # `query` is the (possibly translated-to-English) working query; when
+        # the customer originally wrote in another script, that translation
+        # has already lost the exact original wording. `extra_keyword_text`
+        # lets the caller pass the pre-translation text so its native-script
+        # tokens (e.g. Japanese) still get a chance at an exact-match hit
+        # against ticket content stored in that same script.
+        kw_terms = _keywords(query)
+        if extra_keyword_text:
+            kw_terms += _keywords(extra_keyword_text)
+        keyword = await store.keyword_search(
+            kw_terms, limit=fan_out, product=product, doc_type=doc_type
+        )
 
     if mode == "semantic":
         merged = semantic
@@ -95,9 +212,17 @@ async def retrieve_documents(
 
     chunks = [_to_chunk(h) for h in merged]
     chunks = _dedupe(chunks)
-    if mode == "semantic":
-        chunks = [c for c in chunks if c.score >= settings.min_score_threshold]
-    chunks = chunks[:top_k]
+    # A keyword-only hit (no semantic cosine) still clears the gate as long as
+    # it actually matched query tokens — only drop it if it scored 0 there too.
+    chunks = [
+        c for c in chunks if c.score >= settings.min_score_threshold or c.score == 0.0
+    ]
+    identifiers = [t for t in _keywords(query) if _identifier_like(t)]
+    if extra_keyword_text:
+        identifiers += [
+            t for t in _keywords(extra_keyword_text) if _identifier_like(t)
+        ]
+    chunks = _prioritize_identifier_chunks(chunks, identifiers, top_k)
 
     # ── Graph expansion (optional, when Neo4j is enabled) ──
     if settings.neo4j_enabled:
@@ -159,42 +284,17 @@ def _dedupe(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
     return unique
 
 
-def _merge_hybrid(semantic: list[dict], keyword: list[dict]) -> list[dict]:
-    """Rank by a weighted blend, but keep the true semantic cosine as the
-    displayed/gating score so callers can reason about absolute relevance."""
-    alpha = settings.hybrid_alpha
-    sem_norm = _normalize([h["score"] for h in semantic])
-    kw_norm = _normalize([h["score"] for h in keyword])
-
-    combined: dict[str, dict] = {}
-    for h, ns in zip(semantic, sem_norm):
-        combined[h["id"]] = {
-            "id": h["id"],
-            "payload": h["payload"],
-            "score": h["score"],  # true cosine
-            "_rank": alpha * ns,
-        }
-    for h, nk in zip(keyword, kw_norm):
-        if h["id"] in combined:
-            combined[h["id"]]["_rank"] += (1 - alpha) * nk
-        else:
-            combined[h["id"]] = {
-                "id": h["id"],
-                "payload": h["payload"],
-                "score": 0.0,  # keyword-only hit, no semantic cosine
-                "_rank": (1 - alpha) * nk,
-            }
-
-    return sorted(combined.values(), key=lambda x: x["_rank"], reverse=True)
-
-
 async def retrieve_conversations(
-    query: str, *, top_k: int | None = None, product: str | None = None
+    query: str,
+    *,
+    top_k: int | None = None,
+    product: str | None = None,
+    vector: list[float] | None = None,
 ) -> list[SimilarConversation]:
     top_k = top_k or settings.top_k_chats
     store = get_vector_store()
     embedder = get_embedder()
-    vector = await embedder.embed_query(query)
+    vector = vector or await embedder.embed_query(query)
     hits = await store.search_conversations(vector, top_k=top_k, product=product)
 
     results: list[SimilarConversation] = []

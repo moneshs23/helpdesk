@@ -6,10 +6,8 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.models import ConversationORM
-from backend.embeddings import get_embedder
 from backend.models.enums import ConversationStatus
 from backend.models.schemas import ChatRequest, ChatResponse
-from backend.qdrant import get_vector_store
 from backend.rag.pipeline import run_chat
 from backend.utils.logging import logger
 
@@ -17,8 +15,6 @@ from backend.utils.logging import logger
 class ChatService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
-        self.store = get_vector_store()
-        self.embedder = get_embedder()
 
     async def process(self, request: ChatRequest) -> ChatResponse:
         response = await run_chat(request)
@@ -54,8 +50,11 @@ class ChatService:
 
         # Store embedding for future semantic memory search.
         try:
-            vector = await self.embedder.embed_query(response.translated_query)
-            await self.store.upsert_conversation(
+            from backend.embeddings import get_embedder
+            from backend.qdrant import get_vector_store
+
+            vector = await get_embedder().embed_query(response.translated_query)
+            await get_vector_store().upsert_conversation(
                 vector,
                 {
                     "conversation_id": response.conversation_id,

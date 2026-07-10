@@ -1,12 +1,20 @@
-"""Document management service: upload, ingest, list, delete, replace, versions."""
+"""Document management service: upload, ingest, list, delete, replace, versions.
+
+Ingestion (extract → chunk → embed → store) runs as a background task so large
+files (e.g. multi-MB Excel workbooks producing tens of thousands of chunks)
+don't block or time out the upload request. The document row is committed with
+status ``processing`` first; the task updates ``chunk_count`` as batches land
+and flips the status to ``ready``/``failed`` at the end.
+"""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import aiofiles
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
@@ -20,6 +28,13 @@ from backend.qdrant import get_vector_store
 from backend.rag.ingest import ingest_document
 from backend.utils.logging import logger
 from backend.utils.security import sanitize_filename, validate_upload
+
+# Keep strong references so background ingest tasks aren't garbage-collected.
+_INGEST_TASKS: set[asyncio.Task] = set()
+
+
+class _DocumentDeleted(Exception):
+    """Raised when the document row disappears mid-ingest (user deleted it)."""
 
 
 def _tags_to_list(tags: str) -> list[str]:
@@ -42,6 +57,84 @@ def _to_metadata(doc: DocumentORM) -> DocumentMetadata:
         pinned=doc.pinned,
         error=doc.error or None,
     )
+
+
+async def _run_ingest(
+    *,
+    document_id: str,
+    stored_path: Path,
+    filename: str,
+    title: str,
+    doc_type: DocumentType,
+    product: str,
+    upload_date: datetime,
+    version: int,
+) -> None:
+    """Background ingestion: updates the document row as batches are stored."""
+    from backend.database.session import AsyncSessionLocal  # noqa: PLC0415
+
+    async def on_progress(done: int, total: int) -> None:
+        async with AsyncSessionLocal() as session:
+            doc = await session.get(DocumentORM, document_id)
+            if doc is None:
+                raise _DocumentDeleted(document_id)
+            doc.chunk_count = done
+            await session.commit()
+
+    try:
+        result = await ingest_document(
+            document_id=document_id,
+            stored_path=stored_path,
+            filename=filename,
+            title=title,
+            doc_type=doc_type,
+            product=product,
+            upload_date=upload_date,
+            on_progress=on_progress,
+        )
+    except _DocumentDeleted:
+        # Deleted while processing: drop any vectors stored since the delete.
+        logger.info(f"Document {document_id} deleted mid-ingest; cleaning up.")
+        await get_vector_store().delete_document(document_id)
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"Ingestion failed for {filename}")
+        async with AsyncSessionLocal() as session:
+            doc = await session.get(DocumentORM, document_id)
+            if doc is not None:
+                doc.status = DocumentStatus.FAILED.value
+                doc.error = str(exc)
+                await session.commit()
+        return
+
+    async with AsyncSessionLocal() as session:
+        doc = await session.get(DocumentORM, document_id)
+        if doc is None:
+            await get_vector_store().delete_document(document_id)
+            return
+        doc.pages = result.pages
+        doc.chunk_count = result.chunk_count
+        doc.status = (
+            DocumentStatus.READY.value
+            if result.chunk_count > 0
+            else DocumentStatus.FAILED.value
+        )
+        doc.error = "" if result.chunk_count > 0 else "No extractable text found."
+        await session.execute(
+            update(DocumentVersionORM)
+            .where(
+                DocumentVersionORM.document_id == document_id,
+                DocumentVersionORM.version == version,
+            )
+            .values(chunk_count=result.chunk_count)
+        )
+        await session.commit()
+
+
+def _spawn_ingest(**kwargs) -> None:
+    task = asyncio.create_task(_run_ingest(**kwargs))
+    _INGEST_TASKS.add(task)
+    task.add_done_callback(_INGEST_TASKS.discard)
 
 
 class DocumentService:
@@ -67,6 +160,22 @@ class DocumentService:
         tags: list[str] | None = None,
     ) -> DocumentMetadata:
         doc_type = validate_upload(filename, len(content))
+
+        # Re-uploading a file replaces any existing document with the same name.
+        duplicates = (
+            (
+                await self.session.execute(
+                    select(DocumentORM.id).where(
+                        DocumentORM.filename == sanitize_filename(filename)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for old_id in duplicates:
+            await self.delete(old_id)
+
         dest, safe_name = await self._save_file(content, filename)
 
         document_id = uuid.uuid4().hex
@@ -84,44 +193,30 @@ class DocumentService:
             upload_date=now,
         )
         self.session.add(doc)
-        await self.session.flush()
-
-        try:
-            result = await ingest_document(
-                document_id=document_id,
-                stored_path=dest,
-                filename=safe_name,
-                title=doc.title,
-                doc_type=doc_type,
-                product=product or "",
-                upload_date=now,
-            )
-            doc.pages = result.pages
-            doc.chunk_count = result.chunk_count
-            doc.status = (
-                DocumentStatus.READY.value
-                if result.chunk_count > 0
-                else DocumentStatus.FAILED.value
-            )
-            if result.chunk_count == 0:
-                doc.error = "No extractable text found."
-        except Exception as exc:  # noqa: BLE001
-            logger.exception(f"Ingestion failed for {safe_name}")
-            doc.status = DocumentStatus.FAILED.value
-            doc.error = str(exc)
-
         self.session.add(
             DocumentVersionORM(
                 document_id=document_id,
                 version=1,
                 stored_path=str(dest),
                 size_bytes=len(content),
-                chunk_count=doc.chunk_count,
+                chunk_count=0,
                 note="Initial upload",
                 upload_date=now,
             )
         )
-        await self.session.flush()
+        # Commit before spawning so the background task's session sees the row.
+        await self.session.commit()
+
+        _spawn_ingest(
+            document_id=document_id,
+            stored_path=dest,
+            filename=safe_name,
+            title=doc.title,
+            doc_type=doc_type,
+            product=product or "",
+            upload_date=now,
+            version=1,
+        )
         return _to_metadata(doc)
 
     async def replace(
@@ -137,23 +232,14 @@ class DocumentService:
         dest, safe_name = await self._save_file(content, filename)
         now = datetime.now(timezone.utc)
 
-        result = await ingest_document(
-            document_id=document_id,
-            stored_path=dest,
-            filename=safe_name,
-            title=doc.title,
-            doc_type=doc_type,
-            product=doc.product,
-            upload_date=now,
-        )
         doc.filename = safe_name
         doc.stored_path = str(dest)
         doc.doc_type = doc_type.value
         doc.size_bytes = len(content)
-        doc.pages = result.pages
-        doc.chunk_count = result.chunk_count
+        doc.pages = 0
+        doc.chunk_count = 0
         doc.version += 1
-        doc.status = DocumentStatus.READY.value
+        doc.status = DocumentStatus.PROCESSING.value
         doc.error = ""
         doc.upload_date = now
 
@@ -163,12 +249,23 @@ class DocumentService:
                 version=doc.version,
                 stored_path=str(dest),
                 size_bytes=len(content),
-                chunk_count=result.chunk_count,
+                chunk_count=0,
                 note="Replaced",
                 upload_date=now,
             )
         )
-        await self.session.flush()
+        await self.session.commit()
+
+        _spawn_ingest(
+            document_id=document_id,
+            stored_path=dest,
+            filename=safe_name,
+            title=doc.title,
+            doc_type=doc_type,
+            product=doc.product,
+            upload_date=now,
+            version=doc.version,
+        )
         return _to_metadata(doc)
 
     async def list_documents(
@@ -254,6 +351,47 @@ class DocumentService:
         await self.session.flush()
         logger.info(f"Deleted document {document_id}")
         return True
+
+    async def reindex_all(self) -> dict:
+        """Re-chunk and re-embed every stored document, replacing old vectors."""
+        docs = (await self.session.execute(select(DocumentORM))).scalars().all()
+        reindexed = 0
+        failed = 0
+        for doc in docs:
+            path = Path(doc.stored_path)
+            if not path.exists():
+                doc.status = DocumentStatus.FAILED.value
+                doc.error = "Stored file is missing."
+                failed += 1
+                continue
+            try:
+                await self.store.delete_document(doc.id)
+                result = await ingest_document(
+                    document_id=doc.id,
+                    stored_path=path,
+                    filename=doc.filename,
+                    title=doc.title or doc.filename,
+                    doc_type=DocumentType.from_extension(doc.doc_type),
+                    product=doc.product or "",
+                    upload_date=doc.upload_date,
+                )
+                doc.pages = result.pages
+                doc.chunk_count = result.chunk_count
+                if result.chunk_count > 0:
+                    doc.status = DocumentStatus.READY.value
+                    doc.error = ""
+                    reindexed += 1
+                else:
+                    doc.status = DocumentStatus.FAILED.value
+                    doc.error = "No extractable text found."
+                    failed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Reindex failed for {doc.filename}")
+                doc.status = DocumentStatus.FAILED.value
+                doc.error = str(exc)
+                failed += 1
+        await self.session.flush()
+        return {"total": len(docs), "reindexed": reindexed, "failed": failed}
 
     async def count(self) -> int:
         return int(

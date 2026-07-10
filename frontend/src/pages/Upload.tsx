@@ -36,6 +36,18 @@ export default function UploadPage() {
     load();
   }, [load]);
 
+  // While any document is still ingesting, poll so chunk counts/status update live.
+  useEffect(() => {
+    if (!docs.some((d) => d.status === "processing" || d.status === "pending")) return;
+    const t = setInterval(() => {
+      api
+        .listDocuments(query ? { query } : undefined)
+        .then((d) => setDocs(d.documents))
+        .catch(() => {});
+    }, 2500);
+    return () => clearInterval(t);
+  }, [docs, query]);
+
   const uploadFiles = async (files: FileList | File[]) => {
     setUploading(true);
     for (const file of Array.from(files)) {
@@ -44,7 +56,12 @@ export default function UploadPage() {
       if (product) form.append("product", product);
       try {
         const res = await api.upload(form);
-        push(`${res.document.filename}: ${res.document.chunk_count} chunks`, "success");
+        push(
+          res.document.status === "processing"
+            ? `${res.document.filename}: processing in background...`
+            : `${res.document.filename}: ${res.document.chunk_count} chunks`,
+          "success"
+        );
       } catch (e: any) {
         push(e?.response?.data?.detail || `Failed: ${file.name}`, "error");
       }
@@ -61,8 +78,12 @@ export default function UploadPage() {
 
   const remove = async (id: string) => {
     if (!confirm("Delete this document and its embeddings?")) return;
-    await api.deleteDocument(id);
-    push("Document deleted", "success");
+    try {
+      await api.deleteDocument(id);
+      push("Document deleted", "success");
+    } catch (e: any) {
+      push(e?.response?.data?.detail || "Delete failed", "error");
+    }
     load();
   };
 
@@ -85,22 +106,24 @@ export default function UploadPage() {
           onDragLeave={() => setDragOver(false)}
           onDrop={onDrop}
           onClick={() => inputRef.current?.click()}
-          className={`brutal-card-lg flex cursor-pointer flex-col items-center justify-center gap-3 py-14 text-center transition-all ${
-            dragOver ? "bg-brutal-yellow -translate-y-1" : "bg-white dark:bg-brutal-darkcard"
+          className={`brutal-card-lg flex cursor-pointer flex-col items-center justify-center gap-3 py-14 text-center transition-colors ${
+            dragOver ? "border-brutal-blue bg-blue-50 dark:bg-blue-950/20" : "bg-white dark:bg-brutal-darkcard"
           }`}
         >
-          <div className="flex h-16 w-16 items-center justify-center rounded-brutal border-[3px] border-brutal-ink bg-brutal-blue text-white dark:border-brutal-paper">
+          <div className="flex h-16 w-16 items-center justify-center rounded-brutal border border-brutal-border bg-brutal-blue text-white dark:border-brutal-borderDark">
             <UploadCloud size={30} />
           </div>
           <p className="font-display text-xl font-bold">Drag & drop files here</p>
-          <p className="text-sm opacity-70">or click to browse — PDF, DOCX, TXT, CSV, Excel, Markdown</p>
-          {uploading && <Spinner label="Ingesting & embedding..." />}
+          <p className="text-sm opacity-70">
+            or click to browse — PDF, Word, PowerPoint, Excel, CSV, Markdown, HTML, JSON, XML, RTF, TXT
+          </p>
+          {uploading && <Spinner label="Uploading..." />}
           <input
             ref={inputRef}
             type="file"
             multiple
             hidden
-            accept=".pdf,.docx,.doc,.txt,.csv,.xlsx,.xls,.md,.markdown"
+            accept=".pdf,.docx,.doc,.txt,.text,.csv,.tsv,.xlsx,.xls,.xlsm,.md,.markdown,.pptx,.html,.htm,.json,.xml,.rtf,.log,.yaml,.yml,.ini,.rst"
             onChange={(e) => e.target.files && uploadFiles(e.target.files)}
           />
         </div>
@@ -143,9 +166,9 @@ export default function UploadPage() {
             {docs.map((d) => (
               <div
                 key={d.id}
-                className="flex flex-wrap items-center gap-3 rounded-brutal border-[3px] border-brutal-ink p-3 dark:border-brutal-paper"
+                className="flex flex-wrap items-center gap-3 rounded-brutal border border-brutal-border p-3 dark:border-brutal-borderDark"
               >
-                <div className="flex h-10 w-10 items-center justify-center rounded-brutal border-2 border-brutal-ink bg-brutal-yellow text-xs font-bold uppercase dark:border-brutal-paper">
+                <div className="flex h-10 w-10 items-center justify-center rounded-brutal border border-brutal-border bg-brutal-yellow text-xs font-bold uppercase dark:border-brutal-borderDark">
                   {d.doc_type}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -156,7 +179,11 @@ export default function UploadPage() {
                   </p>
                 </div>
                 <Badge color={d.status === "ready" ? "green" : d.status === "failed" ? "red" : "yellow"}>
-                  {d.status === "failed" ? "failed" : `${d.chunk_count} chunks · ${d.pages}p`}
+                  {d.status === "failed"
+                    ? `failed${d.error ? `: ${d.error.slice(0, 60)}` : ""}`
+                    : d.status === "ready"
+                      ? `${d.chunk_count} chunks · ${d.pages}p`
+                      : `processing... ${d.chunk_count} chunks`}
                 </Badge>
                 <div className="flex items-center gap-1">
                   <button className="brutal-btn-ghost !px-2 !py-1" title="Pin" onClick={() => togglePin(d)}>

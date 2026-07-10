@@ -60,7 +60,7 @@ export function ConfidenceBar({ value }: { value: number }) {
   const color = pct >= 70 ? "bg-brutal-green" : pct >= 40 ? "bg-brutal-yellow" : "bg-brutal-red";
   return (
     <div className="flex items-center gap-2">
-      <div className="h-3 w-24 border-2 border-brutal-ink dark:border-brutal-paper rounded-full overflow-hidden bg-white dark:bg-brutal-darker">
+      <div className="h-3 w-24 border border-brutal-border dark:border-brutal-borderDark rounded-full overflow-hidden bg-white dark:bg-brutal-darker">
         <div className={clsx("h-full", color)} style={{ width: `${pct}%` }} />
       </div>
       <span className="text-xs font-bold">{pct}%</span>

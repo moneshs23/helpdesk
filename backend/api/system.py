@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from backend.config import settings
 from backend.llm import get_llm
 from backend.utils.logging import logger
+from backend.utils.security import ALLOWED_EXTENSIONS
 from backend.utils.system import get_system_health
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -58,5 +59,5 @@ async def get_public_settings() -> dict:
         "embedding_model": settings.embedding_model,
         "translation_engine": settings.translation_engine,
         "max_upload_mb": settings.max_upload_mb,
-        "supported_types": ["pdf", "docx", "txt", "csv", "xlsx", "md"],
+        "supported_types": sorted(ALLOWED_EXTENSIONS),
     }

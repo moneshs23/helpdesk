@@ -47,7 +47,8 @@ async def lifespan(app: FastAPI):
         get_vector_store()
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Vector store init deferred: {exc}")
-    # Warm up the LLM + embedder in the background so the first user query is fast.
+    # Warm up the LLM + embedder in the background so the first user query
+    # doesn't pay the cold-load cost (can be 60-100s+ on CPU-only hardware).
     asyncio.create_task(_warmup())
     yield
     logger.info("Shutting down.")
@@ -60,6 +61,12 @@ async def _warmup() -> None:
 
         await get_embedder().embed_query("warmup")
         await get_llm().generate("Hi", temperature=0.0, num_predict=1)
+        # Also warm the JSON-constrained decoding path used by suggestion
+        # generation — grammar-constrained ("format": "json") decoding can pay
+        # its own first-use setup cost separate from plain generation.
+        await get_llm().generate_json(
+            "Return {\"ok\": true}", temperature=0.0, num_predict=10
+        )
         logger.info("Model warmup complete.")
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Warmup skipped: {exc}")

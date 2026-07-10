@@ -18,7 +18,7 @@ function Bars({
       {data.map((d) => (
         <div key={d.label} className="flex items-center gap-2">
           <span className="w-28 truncate text-sm font-bold">{d.label}</span>
-          <div className="h-6 flex-1 border-2 border-brutal-ink dark:border-brutal-paper rounded-brutal overflow-hidden bg-white dark:bg-brutal-darker">
+          <div className="h-6 flex-1 border border-brutal-border dark:border-brutal-borderDark rounded-brutal overflow-hidden bg-white dark:bg-brutal-darker">
             <div className={`h-full ${color}`} style={{ width: `${(d.value / max) * 100}%` }} />
           </div>
           <span className="w-8 text-right text-sm font-bold">{d.value}</span>
@@ -85,7 +85,7 @@ export default function Analytics() {
         <h2 className="mb-3 font-display text-lg font-bold">Recent Uploads</h2>
         <div className="grid gap-2 md:grid-cols-2">
           {data.recent_uploads.map((d) => (
-            <div key={d.id} className="flex items-center justify-between rounded-brutal border-2 border-brutal-ink px-3 py-2 dark:border-brutal-paper">
+            <div key={d.id} className="flex items-center justify-between rounded-brutal border border-brutal-border px-3 py-2 dark:border-brutal-borderDark">
               <span className="truncate font-bold">{d.title}</span>
               <Badge color="green">{d.chunk_count} chunks</Badge>
             </div>

@@ -68,8 +68,14 @@ class Settings(BaseSettings):
     # ---- RAG ----
     chunk_size: int = 800
     chunk_overlap: int = 120
-    top_k_docs: int = 6
+    # 3 candidates: enough for the extractive selector to choose among
+    # near-duplicate tickets (e.g. two different seat-belt tickets), while
+    # keeping the prompt small enough for CPU-only inference. Same-VIN
+    # grouping can extend past this when the query quotes a VIN.
+    top_k_docs: int = 3
     top_k_chats: int = 4
+    max_context_chars: int = 6000
+    llm_suggestion_num_predict: int = 300
     min_score_threshold: float = 0.6
     hybrid_alpha: float = 0.5
 

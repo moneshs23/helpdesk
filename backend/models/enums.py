@@ -18,6 +18,11 @@ class DocumentType(str, Enum):
     CSV = "csv"
     XLSX = "xlsx"
     MD = "md"
+    PPTX = "pptx"
+    HTML = "html"
+    JSON = "json"
+    XML = "xml"
+    RTF = "rtf"
     UNKNOWN = "unknown"
 
     @classmethod
@@ -29,11 +34,25 @@ class DocumentType(str, Enum):
             "doc": cls.DOCX,
             "txt": cls.TXT,
             "text": cls.TXT,
+            "log": cls.TXT,
+            "yaml": cls.TXT,
+            "yml": cls.TXT,
+            "ini": cls.TXT,
+            "rst": cls.TXT,
             "csv": cls.CSV,
+            "tsv": cls.CSV,
             "xlsx": cls.XLSX,
             "xls": cls.XLSX,
+            "xlsm": cls.XLSX,
             "md": cls.MD,
             "markdown": cls.MD,
+            "pptx": cls.PPTX,
+            "ppt": cls.PPTX,
+            "html": cls.HTML,
+            "htm": cls.HTML,
+            "json": cls.JSON,
+            "xml": cls.XML,
+            "rtf": cls.RTF,
         }
         return mapping.get(ext, cls.UNKNOWN)
 

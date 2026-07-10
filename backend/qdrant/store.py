@@ -9,6 +9,7 @@ off-loaded to a worker thread to keep the FastAPI event loop responsive.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -123,26 +124,91 @@ class VectorStore:
             self._search_documents_sync, vector, top_k, flt
         )
 
-    def _keyword_scroll_sync(self, keywords: list[str], limit: int) -> list[dict]:
-        """Naive keyword search via payload scroll + Python scoring."""
-        points, _ = self._client.scroll(
-            collection_name=self.docs, limit=2000, with_payload=True
-        )
-        scored = []
-        for p in points:
-            text = (p.payload or {}).get("text", "").lower()
-            hits = sum(text.count(k.lower()) for k in keywords)
-            if hits:
-                scored.append(
-                    {"id": str(p.id), "score": float(hits), "payload": p.payload}
-                )
-        scored.sort(key=lambda x: x["score"], reverse=True)
-        return scored[:limit]
+    def _keyword_search_sync(
+        self, keywords: list[str], limit: int, flt: Optional[qm.Filter]
+    ) -> list[dict]:
+        """Score chunks by whole-word keyword hit density in their text.
 
-    async def keyword_search(self, keywords: list[str], limit: int = 10) -> list[dict]:
+        A full scan (not a Qdrant text index) — simplest correct option, and
+        genuinely fast at this collection's scale (hundreds to low thousands
+        of chunks), which is exactly what row-oriented ticket documents produce.
+
+        Whole-word matching (not substring) avoids false hits like "me"
+        matching inside "odometer"/"speedometer". Scoring by hits-per-character
+        rather than a raw count also matters: without it, a long prose chunk
+        that happens to contain a few generic words (e.g. "part", "number")
+        many times over outscores a short, precise ticket row that mentions
+        the same words only once — exactly backwards for this domain.
+
+        CJK keywords (Japanese character bigrams — see retriever._cjk_bigrams)
+        are matched as plain substrings instead: Python's `\\b` never asserts
+        a boundary between two adjacent CJK characters (both count as `\\w`),
+        so `\\b`-anchoring would silently never match inside continuous
+        Japanese text.
+        """
         if not keywords:
             return []
-        return await anyio.to_thread.run_sync(self._keyword_scroll_sync, keywords, limit)
+        _cjk = re.compile(r"[぀-ヿ㐀-䶿一-鿿｡-ﾟ]")
+        # Each pattern carries the keyword's length as its match weight: a hit
+        # on a long identifier (17-char VIN, 8-char part number) is a far
+        # stronger relevance signal than a hit on a generic 4-char word, and
+        # a query that quotes a VIN must rank that vehicle's own ticket first.
+        # CJK bigrams get double weight — 2 visual characters carry roughly a
+        # word's worth of meaning, and length-weighting alone would let an
+        # English paraphrase outrank an exact Japanese-script match.
+        weighted = [
+            (
+                (re.compile(re.escape(kw)), len(kw) * 2)
+                if _cjk.search(kw)
+                else (re.compile(rf"\b{re.escape(kw)}\b"), len(kw))
+            )
+            for kw in keywords
+        ]
+        scored: list[tuple[float, dict]] = []
+        next_page = None
+        while True:
+            points, next_page = self._client.scroll(
+                collection_name=self.docs,
+                scroll_filter=flt,
+                limit=256,
+                offset=next_page,
+                with_payload=True,
+            )
+            for p in points:
+                text = str((p.payload or {}).get("text", "")).lower()
+                if not text:
+                    continue
+                hits = sum(len(pat.findall(text)) * w for pat, w in weighted)
+                if hits > 0:
+                    density = hits / len(text)
+                    scored.append(
+                        (density, {"id": str(p.id), "score": float(hits), "payload": p.payload})
+                    )
+            if next_page is None:
+                break
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored[:limit]]
+
+    async def keyword_search(
+        self,
+        keywords: list[str],
+        limit: int = 12,
+        product: Optional[str] = None,
+        doc_type: Optional[str] = None,
+    ) -> list[dict]:
+        conditions = []
+        if product:
+            conditions.append(
+                qm.FieldCondition(key="product", match=qm.MatchValue(value=product))
+            )
+        if doc_type:
+            conditions.append(
+                qm.FieldCondition(key="doc_type", match=qm.MatchValue(value=doc_type))
+            )
+        flt = qm.Filter(must=conditions) if conditions else None
+        return await anyio.to_thread.run_sync(
+            self._keyword_search_sync, keywords, limit, flt
+        )
 
     def _delete_document_sync(self, document_id: str) -> None:
         self._client.delete(

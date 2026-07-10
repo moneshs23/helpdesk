@@ -86,7 +86,7 @@ export default function Chat() {
               <button
                 key={c.id}
                 onClick={() => setMessage(c.question)}
-                className="w-full rounded-brutal border-2 border-brutal-ink p-2 text-left text-xs hover:bg-brutal-yellow dark:border-brutal-paper dark:hover:bg-brutal-darker"
+                className="w-full rounded-brutal border border-brutal-border p-2 text-left text-xs hover:bg-brutal-yellow dark:border-brutal-borderDark dark:hover:bg-brutal-darker"
               >
                 <p className="line-clamp-2 font-bold">{c.question}</p>
                 <div className="mt-1 flex items-center gap-1 opacity-70">
@@ -185,7 +185,7 @@ export default function Chat() {
             {!resp?.retrieved_documents.length && <p className="text-xs opacity-60">Nothing retrieved yet.</p>}
             <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
               {resp?.retrieved_documents.map((c) => (
-                <div key={c.id} className="rounded-brutal border-2 border-brutal-ink p-2 text-xs dark:border-brutal-paper">
+                <div key={c.id} className="rounded-brutal border border-brutal-border p-2 text-xs dark:border-brutal-borderDark">
                   <div className="mb-1 flex items-center justify-between">
                     <span className="font-bold truncate">{c.metadata.filename}</span>
                     <Badge color="blue">p{c.metadata.page}</Badge>
@@ -204,7 +204,7 @@ export default function Chat() {
             {!resp?.similar_conversations.length && <p className="text-xs opacity-60">No similar questions.</p>}
             <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
               {resp?.similar_conversations.map((c, i) => (
-                <div key={i} className="rounded-brutal border-2 border-brutal-ink p-2 text-xs dark:border-brutal-paper">
+                <div key={i} className="rounded-brutal border border-brutal-border p-2 text-xs dark:border-brutal-borderDark">
                   <p className="font-bold line-clamp-2">{c.question}</p>
                   <p className="mt-1 line-clamp-2 opacity-80">{c.answer}</p>
                   <div className="mt-1 flex items-center gap-2 opacity-70 flex-wrap">
@@ -237,7 +237,7 @@ function SuggestionCard({ s, onCopy, copied }: { s: Suggestion; onCopy: () => vo
       </div>
       <p className="whitespace-pre-wrap font-medium">{s.answer_en}</p>
       {s.answer_ja && (
-        <p className="mt-2 whitespace-pre-wrap border-t-2 border-brutal-ink/30 pt-2 font-medium">
+        <p className="mt-2 whitespace-pre-wrap border-t border-brutal-border pt-2 font-medium">
           {s.answer_ja}
         </p>
       )}

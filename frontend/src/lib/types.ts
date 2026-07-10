@@ -1,5 +1,17 @@
 export type Language = "ja" | "en" | "auto" | "unknown";
-export type DocumentTypeT = "pdf" | "docx" | "txt" | "csv" | "xlsx" | "md" | "unknown";
+export type DocumentTypeT =
+  | "pdf"
+  | "docx"
+  | "txt"
+  | "csv"
+  | "xlsx"
+  | "md"
+  | "pptx"
+  | "html"
+  | "json"
+  | "xml"
+  | "rtf"
+  | "unknown";
 export type DocStatus = "pending" | "processing" | "ready" | "failed";
 export type ConvStatus = "pending" | "answered" | "resolved";
 

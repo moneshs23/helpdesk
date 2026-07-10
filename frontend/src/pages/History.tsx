@@ -121,7 +121,7 @@ export default function HistoryPage() {
                 <p className="text-sm opacity-70">↳ {c.translated_query}</p>
               )}
 
-              <div className="mt-2 rounded-brutal border-2 border-brutal-ink bg-brutal-paper p-2 dark:border-brutal-paper dark:bg-brutal-darker">
+              <div className="mt-2 rounded-brutal border border-brutal-border bg-brutal-paper p-2 dark:border-brutal-borderDark dark:bg-brutal-darker">
                 {editing === c.id ? (
                   <div className="space-y-2">
                     <textarea className="brutal-input min-h-[80px]" value={draft} onChange={(e) => setDraft(e.target.value)} />

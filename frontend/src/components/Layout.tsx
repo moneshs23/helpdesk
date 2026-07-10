@@ -36,7 +36,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       )}
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between gap-3 border-b-[3px] border-brutal-ink bg-white px-4 py-3 dark:border-brutal-paper dark:bg-brutal-darkcard">
+        <header className="flex items-center justify-between gap-3 border-b border-brutal-border bg-white px-4 py-3 dark:border-brutal-borderDark dark:bg-brutal-darkcard">
           <button className="brutal-btn-ghost md:hidden !px-2 !py-1" onClick={() => setOpen((o) => !o)}>
             {open ? <X size={18} /> : <Menu size={18} />}
           </button>

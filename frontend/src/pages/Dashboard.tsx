@@ -9,7 +9,6 @@ import {
   TrendingUp,
   Users,
   Upload,
-  ArrowRight,
 } from "lucide-react";
 import { api } from "../lib/api";
 import type { AnalyticsResponse } from "../lib/types";
@@ -46,9 +45,6 @@ export default function Dashboard() {
           <h1 className="font-display text-3xl font-bold">Dashboard</h1>
           <p className="opacity-70">Local AI support at a glance — fully offline.</p>
         </div>
-        <Link to="/chat" className="brutal-btn-blue">
-          Start assisting <ArrowRight size={16} />
-        </Link>
       </div>
 
       {/* Stat cards */}
@@ -120,7 +116,7 @@ export default function Dashboard() {
         {data.recent_uploads.length === 0 && <p className="text-sm opacity-60">No documents uploaded yet.</p>}
         <div className="grid gap-2 md:grid-cols-2">
           {data.recent_uploads.map((d) => (
-            <div key={d.id} className="flex items-center justify-between rounded-brutal border-2 border-brutal-ink px-3 py-2 dark:border-brutal-paper">
+            <div key={d.id} className="flex items-center justify-between rounded-brutal border border-brutal-border px-3 py-2 dark:border-brutal-borderDark">
               <div className="min-w-0">
                 <p className="truncate font-bold">{d.title}</p>
                 <p className="truncate text-xs opacity-60">{d.filename}</p>

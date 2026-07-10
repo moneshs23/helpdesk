@@ -23,18 +23,18 @@ const links = [
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
-    <aside className="flex h-full w-64 flex-col gap-4 border-r-[3px] border-brutal-ink bg-brutal-yellow p-4 dark:border-brutal-paper dark:bg-brutal-darkcard">
-      <div className="brutal-card flex items-center gap-2 bg-brutal-pink p-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-brutal border-2 border-brutal-ink bg-white">
-          <Headphones size={20} />
+    <aside className="flex h-full w-64 flex-col gap-4 border-r border-brutal-border bg-white p-4 dark:border-brutal-borderDark dark:bg-brutal-darkcard">
+      <div className="flex items-center gap-2.5 px-1">
+        <div className="flex h-9 w-9 items-center justify-center rounded-brutal bg-brutal-blue text-white">
+          <Headphones size={18} />
         </div>
         <div className="leading-tight">
-          <p className="font-display text-sm font-bold">AI SUPPORT</p>
-          <p className="text-[10px] font-bold uppercase tracking-wide">Assistant</p>
+          <p className="font-display text-sm font-semibold">AI Support</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">Assistant</p>
         </div>
       </div>
 
-      <nav className="flex flex-col gap-2">
+      <nav className="flex flex-col gap-1">
         {links.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -43,10 +43,10 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             onClick={onNavigate}
             className={({ isActive }) =>
               clsx(
-                "flex items-center gap-3 rounded-brutal border-[3px] border-brutal-ink px-3 py-2 text-sm font-bold transition-all dark:border-brutal-paper",
+                "flex items-center gap-3 rounded-brutal px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-brutal-blue text-white shadow-brutal dark:shadow-brutal-white"
-                  : "bg-white hover:-translate-y-[1px] hover:shadow-brutal dark:bg-brutal-darker dark:text-brutal-paper dark:hover:shadow-brutal-white"
+                  ? "bg-brutal-blue text-white shadow-brutal-sm"
+                  : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
               )
             }
           >
@@ -55,12 +55,12 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
 
-      <div className="mt-auto brutal-card bg-white p-3 text-[11px] font-bold dark:bg-brutal-darker">
-        <p className="mb-1 flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-brutal-green inline-block" />
+      <div className="mt-auto rounded-brutal border border-brutal-border bg-slate-50 p-3 text-[11px] font-medium dark:border-brutal-borderDark dark:bg-brutal-darker">
+        <p className="mb-1 flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
+          <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block" />
           100% Offline
         </p>
-        <p className="opacity-70">Gemma 3 · Local RAG · No Cloud</p>
+        <p className="text-slate-500 dark:text-slate-400">Gemma 3 · Local RAG · No Cloud</p>
       </div>
     </aside>
   );
